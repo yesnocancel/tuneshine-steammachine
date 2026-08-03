@@ -422,17 +422,29 @@ def artwork_for(cfg: dict, game: dict) -> bytes | None:
 
 # ------------------------------------------------------------ tuneshine
 
+_last_good_ip: str | None = None
+
+
 def tuneshine_ip(cfg: dict) -> str:
     """Resolve the Tuneshine host to an IPv4 address at call time, so a .local
-    hostname in the config survives DHCP changes and avoids slow IPv6 lookups."""
+    hostname in the config survives DHCP changes and avoids slow IPv6 lookups.
+    Falls back to the last successful resolution when lookup fails: during
+    suspend prep mDNS dies before we do, but the clear must still get out."""
+    global _last_good_ip
     host = cfg["tuneshine_host"]
     try:
         socket.inet_aton(host)
         return host  # already an IP
     except OSError:
         pass
-    infos = socket.getaddrinfo(host, 80, socket.AF_INET, socket.SOCK_STREAM)
-    return infos[0][4][0]
+    try:
+        infos = socket.getaddrinfo(host, 80, socket.AF_INET, socket.SOCK_STREAM)
+    except OSError:
+        if _last_good_ip:
+            return _last_good_ip
+        raise
+    _last_good_ip = infos[0][4][0]
+    return _last_good_ip
 
 
 def tuneshine_send(cfg: dict, webp: bytes, metadata: dict) -> None:
@@ -502,25 +514,77 @@ def sleep_signals(cmd: list[str]):
             pending = False
 
 
+class SleepInhibitor:
+    """Best-effort logind delay lock. Without one, logind may suspend before
+    our clear request finishes; holding it guarantees a grace window between
+    PrepareForSleep(true) and the actual suspend. The lock lives in a
+    `systemd-inhibit ... cat` child; closing cat's stdin releases it."""
+
+    def __init__(self):
+        self._proc = None
+
+    def take(self) -> None:
+        if self._proc is not None and self._proc.poll() is None:
+            return
+        try:
+            self._proc = subprocess.Popen(
+                ["systemd-inhibit", "--what=sleep", "--mode=delay",
+                 "--who=tuneshine-steam", "--why=clearing Tuneshine display",
+                 "cat"],
+                stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL)
+        except OSError:
+            self._proc = None
+
+    def release(self) -> None:
+        if self._proc is None:
+            return
+        try:
+            self._proc.stdin.close()
+            self._proc.wait(timeout=3)
+        except (OSError, subprocess.TimeoutExpired):
+            self._proc.kill()
+        self._proc = None
+
+
+def clear_for_suspend(cfg: dict) -> bool:
+    try:
+        tuneshine_clear(cfg)
+        return True
+    except Exception as e:
+        log(f"  clear on suspend failed: {e}")
+        return False
+
+
 def sleep_monitor(cfg: dict, state: dict, lock: threading.Lock, dry_run: bool) -> None:
     """Clear the Tuneshine when the machine suspends; force a re-send on resume.
-    ExecStopPost never fires for suspend, so without this the image lingers."""
+    ExecStopPost never fires for suspend, so without this the image lingers.
+    While `suspending` is set, run_pass sends nothing — otherwise the poll loop
+    could re-send the artwork in the window between our clear and the suspend."""
+    inhibitor = SleepInhibitor()
+    inhibitor.take()
     for cmd in SLEEP_MONITOR_CMDS:
         try:
             while True:
                 for sleeping in sleep_signals(cmd):
-                    with lock:
-                        if sleeping and state.get("shown") is not None:
-                            log("suspending — clearing Tuneshine")
-                            if not dry_run:
-                                try:
-                                    tuneshine_clear(cfg)
-                                except Exception as e:
-                                    log(f"  clear on suspend failed: {e}")
-                        # either way, re-detect + re-send on the pass after resume
-                        state["shown"] = None
-                        state["misses"] = 0
-                    if not sleeping:
+                    if sleeping:
+                        with lock:
+                            state["suspending"] = True
+                            state["misses"] = 0
+                            if state.get("shown") is not None:
+                                log("suspending — clearing Tuneshine")
+                                # on failure keep `shown`: the device still has
+                                # the image, so resume must not skip fixing it
+                                if dry_run or clear_for_suspend(cfg):
+                                    state["shown"] = None
+                        inhibitor.release()  # let the suspend proceed
+                    else:
+                        with lock:
+                            if not state.get("suspending"):
+                                continue  # duplicate resume signal
+                            state["suspending"] = False
+                            state["misses"] = 0
+                        inhibitor.take()
                         log("resumed — will re-send on next poll if a game is running")
                 time.sleep(5)  # monitor process died; restart it
         except OSError:
@@ -531,6 +595,8 @@ def sleep_monitor(cfg: dict, state: dict, lock: threading.Lock, dry_run: bool) -
 # ----------------------------------------------------------------- main
 
 def run_pass(cfg: dict, root: str, state: dict, dry_run: bool) -> None:
+    if state.get("suspending"):
+        return  # pre-suspend window: a send here would undo the suspend clear
     appid = detect_running_appid()
     if appid is None:
         # debounce: launches (Proton setup) and level loads can briefly leave no
