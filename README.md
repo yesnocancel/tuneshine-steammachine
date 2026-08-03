@@ -35,7 +35,7 @@ Re-run just the dry run anytime with `./setup.sh --test`.
 2. **Prepare the Steam Machine** (Desktop Mode → Konsole):
    ```bash
    passwd                                        # set a password
-   sudo hostnamectl set-hostname steammachine    # avoid mDNS collision with a Steam Deck
+   sudo hostnamectl set-hostname steammachine    # (optional) avoid mDNS collision with a Steam Deck
    sudo systemctl enable --now sshd
    ```
 3. From this repo: `./install.sh deck@steammachine.local` (adjust user/host).
