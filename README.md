@@ -92,6 +92,13 @@ something changes):
 
 ## Notes
 
+- **Network**: the Steam Machine and the Tuneshine must be on the same local
+  network — artwork is delivered directly over your LAN, not via the cloud.
+  (Strictly, they only need to reach each other over HTTP: separate
+  subnets/VLANs work if routed, but `.local` hostnames and the wizard's
+  auto-discovery use mDNS, which doesn't cross subnets — there, use the
+  Tuneshine's IP in the config and give it a DHCP reservation.) Internet
+  access is only needed to download artwork.
 - If the Steam Machine is hard-powered-off mid-game the Tuneshine keeps the
   last game art until the machine boots again (startup reconciliation) or a
   manual `curl -X DELETE http://<tuneshine>/image`.
