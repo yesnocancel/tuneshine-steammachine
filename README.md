@@ -1,4 +1,4 @@
-# tuneshine-steam
+# tuneshine-steammachine
 
 Show the artwork of whatever is being played **on your Steam Machine** on a
 [Tuneshine](https://www.tuneshine.rocks/) display.
