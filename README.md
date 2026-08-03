@@ -14,6 +14,7 @@ Show the artwork of whatever is being played **on your Steam Machine** on a
   sleep or shuts down), the Tuneshine returns to its normal music/idle
   display.
 - The Tuneshine app also shows who's playing and what, like it does for music.
+<img width="768" height="1024" alt="7BF4AA61-7424-43DA-BA7E-8B2D3A2F06F3_1_105_c" src="https://github.com/user-attachments/assets/4b504b81-1240-49c0-8bb9-47914ba99a13" />
 
 ## Setup (the easy way)
 
