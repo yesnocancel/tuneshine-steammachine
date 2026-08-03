@@ -1,0 +1,5 @@
+{
+  "tuneshine_host": "tuneshine-abcd.local",
+  "sgdb_api_key": "PUT-YOUR-STEAMGRIDDB-KEY-HERE",
+  "poll_seconds": 10
+}

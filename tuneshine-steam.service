@@ -1,0 +1,13 @@
+[Unit]
+Description=Mirror the running Steam game's artwork to the Tuneshine
+After=network-online.target
+
+[Service]
+ExecStart=%h/.local/bin/steam_to_tuneshine.py
+# best-effort: revert Tuneshine to its idle/music screen when the service stops
+ExecStopPost=-%h/.local/bin/steam_to_tuneshine.py --clear
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
