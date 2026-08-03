@@ -1,35 +1,19 @@
 # tuneshine-steam
 
-Show the artwork of whatever is being played **on the Steam Machine** on a
+Show the artwork of whatever is being played **on your Steam Machine** on a
 [Tuneshine](https://www.tuneshine.rocks/) display.
 
-- **Device-bound and live**: the watcher runs *on* the Steam Machine and only
-  reports games with a live process (`/proc` scan for Steam's
-  `reaper SteamLaunch AppId=N` wrapper). Being online on another PC does
-  nothing, and stale state (e.g. after a crash) can't linger.
-- **Active player**: the metadata's artist line is the persona name of
-  whoever is signed in to the Steam client *right now* (`AutoLoginUser` in
-  `registry.vdf`, which Steam updates on user switching). Visible in the
-  Tuneshine mobile app; the panel itself only shows the artwork.
-- **Non-Steam games work**: shortcut names come from `shortcuts.vdf`; artwork
-  is found on [SteamGridDB](https://www.steamgriddb.com) by name search
-  (e.g. classics installed from GOG, emulators, launchers).
-- **Artwork**: the top SteamGridDB icons are scored for colorfulness
-  (Hasler–Süsstrunk) and the most colorful wins — near-grayscale logo icons
-  lose, and square 512/1024 grids only compete when *every* icon is dull.
-  Steam CDN header (center-cropped) is the last resort. Converted to 64×64
-  lossless WebP (Pillow, or ffmpeg fallback), cached in
-  `~/.cache/tuneshine-steam`.
-- **Per-game overrides**: to force artwork for a game, drop any image into
-  `~/.config/tuneshine-steam/overrides/` named `<appid>.<ext>` (Steam) or
-  `shortcut-<slugified-name>.<ext>` (non-Steam) — it beats every heuristic.
-  The log line `using override …` confirms it; the slug appears in the cache
-  filename if unsure.
-- **Metadata**: game name as track, player (Steam persona of the active
-  account, optionally mapped to a friendly name) as artist, service
-  "Steam Machine".
-- When the game closes, the local image is deleted so the Tuneshine reverts to
-  its idle screen (dark/blank, unless music is playing — then album art).
+- **Shows what's actually playing on the device** — being online on your
+  laptop or another PC doesn't trigger anything.
+- **Non-Steam games work too**: anything you've added to Steam as a shortcut
+  (GOG classics, emulators, launchers) gets proper artwork from
+  [SteamGridDB](https://www.steamgriddb.com).
+- **Picks nice artwork automatically** — and if you disagree with a pick, you
+  can override it per game with any image file.
+- **Cleans up after itself**: when you stop playing (or the machine goes to
+  sleep or shuts down), the Tuneshine returns to its normal music/idle
+  display.
+- The Tuneshine app also shows who's playing and what, like it does for music.
 
 ## Setup (the easy way)
 
@@ -37,11 +21,10 @@ Show the artwork of whatever is being played **on the Steam Machine** on a
 ./setup.sh
 ```
 
-An interactive wizard that auto-discovers the Tuneshine via mDNS, walks you
-through enabling SSH on the Steam Machine (one copy-paste in Konsole),
-installs your SSH key, validates your SteamGridDB API key, finds the Steam
-accounts on the machine and asks for display names, installs everything,
-runs an on-device dry run, and only goes live after you confirm.
+An interactive wizard that auto-discovers the Tuneshine on your network,
+walks you through enabling SSH on the Steam Machine (one copy-paste in
+Konsole), installs your SSH key, validates your SteamGridDB API key, installs
+everything, runs an on-device dry run, and only goes live after you confirm.
 Re-run just the dry run anytime with `./setup.sh --test`.
 
 ## Setup (manual)
@@ -56,7 +39,7 @@ Re-run just the dry run anytime with `./setup.sh --test`.
    ```
 3. From this repo: `./install.sh deck@steammachine.local` (adjust user/host).
 4. Edit `~/.config/tuneshine-steam/config.json` on the machine: Tuneshine
-   host/IP, SGDB key, persona→name mapping.
+   host/IP and your SteamGridDB key.
 5. Test without touching the Tuneshine:
    `~/.local/bin/steam_to_tuneshine.py --dry-run` while a game runs —
    previews land in `/tmp/tuneshine-preview-*.webp`.
@@ -64,18 +47,51 @@ Re-run just the dry run anytime with `./setup.sh --test`.
 
 Logs: `journalctl --user -u tuneshine-steam -f`.
 
+## How it works
+
+A small Python watcher runs on the Steam Machine as a systemd user service
+and polls every few seconds (locally only — no network traffic unless
+something changes):
+
+- **Game detection**: scans `/proc` for Steam's launcher wrapper
+  (`reaper SteamLaunch AppId=N`), so only games with a live process count —
+  stale state after a crash can't linger. Works for Steam games and non-Steam
+  shortcuts alike.
+- **Names**: Steam games are resolved via their `appmanifest_*.acf`; shortcut
+  names come from `shortcuts.vdf` (binary VDF parser included).
+- **Player**: the persona name of the account currently signed in to the
+  Steam client (`AutoLoginUser` in `registry.vdf`, updated on user
+  switching). Shown in the Tuneshine mobile app; the panel itself only shows
+  artwork.
+- **Artwork selection**: the top SteamGridDB icons are scored for
+  colorfulness (Hasler–Süsstrunk) and the most colorful wins — near-grayscale
+  logo icons lose, and square 512/1024 grids only compete when *every* icon
+  is dull. Steam CDN header (center-cropped) is the last resort.
+- **Per-game overrides**: drop any image into
+  `~/.config/tuneshine-steam/overrides/` named `<appid>.<ext>` (Steam) or
+  `shortcut-<slugified-name>.<ext>` (non-Steam) — it beats every heuristic.
+  The log line `using override …` confirms it.
+- **Conversion & caching**: images are center-cropped and converted to 64×64
+  lossless WebP (Pillow if available, else ffmpeg — SteamOS ships without
+  pip) and cached in `~/.cache/tuneshine-steam`, so each game hits
+  SteamGridDB only once.
+- **Display**: sent to the Tuneshine's local HTTP API (spec:
+  `http://<tuneshine>/openapi.json`), where a locally-pushed image overrides
+  the cloud/music artwork until it's deleted.
+- **Cleanup**: on game exit (debounced to survive loading-screen gaps) and on
+  service stop the image is deleted; a D-Bus listener catches system suspend
+  and clears before sleep, re-sending on resume; on startup the watcher
+  removes a stale image of its own (e.g. after a hard crash).
+
 ## Extras
 
 - `send_image.py` — standalone helper to push any image file to the Tuneshine
   (`--clear` reverts to idle).
 - Survives SteamOS updates: everything lives in the home directory
-  (`~/.local/bin`, `~/.config/systemd/user`, pip `--user`).
+  (`~/.local/bin`, `~/.config/systemd/user`).
 
 ## Notes
 
-- Tuneshine local API spec: `http://<tuneshine>/openapi.json`. Local images
-  override cloud art until `DELETE /image`.
-- If the Steam Machine is hard-powered-off mid-game the Tuneshine may keep the
-  last game art until the next music play or a manual
-  `curl -X DELETE http://<tuneshine>/image` (the service's ExecStopPost handles
-  normal shutdowns best-effort).
+- If the Steam Machine is hard-powered-off mid-game the Tuneshine keeps the
+  last game art until the machine boots again (startup reconciliation) or a
+  manual `curl -X DELETE http://<tuneshine>/image`.
