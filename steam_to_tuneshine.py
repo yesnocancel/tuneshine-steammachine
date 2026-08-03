@@ -425,11 +425,12 @@ def artwork_for(cfg: dict, game: dict) -> bytes | None:
 _last_good_ip: str | None = None
 
 
-def tuneshine_ip(cfg: dict) -> str:
+def tuneshine_ip(cfg: dict, cached_only: bool = False) -> str:
     """Resolve the Tuneshine host to an IPv4 address at call time, so a .local
     hostname in the config survives DHCP changes and avoids slow IPv6 lookups.
-    Falls back to the last successful resolution when lookup fails: during
-    suspend prep mDNS dies before we do, but the clear must still get out."""
+    Falls back to the last successful resolution when lookup fails; with
+    cached_only, skips the lookup entirely — during suspend prep the network
+    dies ~1s after PrepareForSleep, and a stalling mDNS query eats the window."""
     global _last_good_ip
     host = cfg["tuneshine_host"]
     try:
@@ -437,6 +438,8 @@ def tuneshine_ip(cfg: dict) -> str:
         return host  # already an IP
     except OSError:
         pass
+    if cached_only and _last_good_ip:
+        return _last_good_ip
     try:
         infos = socket.getaddrinfo(host, 80, socket.AF_INET, socket.SOCK_STREAM)
     except OSError:
@@ -464,9 +467,10 @@ def tuneshine_send(cfg: dict, webp: bytes, metadata: dict) -> None:
     urllib.request.urlopen(req, timeout=15).read()
 
 
-def tuneshine_clear(cfg: dict) -> None:
-    req = urllib.request.Request(f"http://{tuneshine_ip(cfg)}/image", method="DELETE")
-    urllib.request.urlopen(req, timeout=15).read()
+def tuneshine_clear(cfg: dict, timeout: int = 15, cached_only: bool = False) -> None:
+    req = urllib.request.Request(
+        f"http://{tuneshine_ip(cfg, cached_only)}/image", method="DELETE")
+    urllib.request.urlopen(req, timeout=timeout).read()
 
 
 def tuneshine_state(cfg: dict) -> dict:
@@ -548,8 +552,11 @@ class SleepInhibitor:
 
 
 def clear_for_suspend(cfg: dict) -> bool:
+    # NetworkManager downs the link ~1s after PrepareForSleep regardless of our
+    # delay lock, so go straight at the cached IP with a short timeout — the
+    # request must be on the wire within that first second to win.
     try:
-        tuneshine_clear(cfg)
+        tuneshine_clear(cfg, timeout=3, cached_only=True)
         return True
     except Exception as e:
         log(f"  clear on suspend failed: {e}")
