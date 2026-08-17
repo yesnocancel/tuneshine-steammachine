@@ -16,7 +16,7 @@ Config lives in ~/.config/tuneshine-steam/config.json:
       "tuneshine_host": "tuneshine-abcd.local",
       "sgdb_api_key": "...",                  # steamgriddb.com/profile/preferences/api
       "poll_seconds": 10,
-      "display_seconds": 60                   # revert to idle screen after N s; 0 = show until game ends
+      "display_seconds": 120                  # revert to idle screen after N s; 0 = show until game ends
     }
 
 Usage:
@@ -63,7 +63,7 @@ def load_config() -> dict:
     if not cfg.get("tuneshine_host") or not cfg.get("sgdb_api_key"):
         sys.exit(f"config {CONFIG_PATH} needs tuneshine_host and sgdb_api_key")
     cfg.setdefault("poll_seconds", 10)
-    cfg.setdefault("display_seconds", 60)
+    cfg.setdefault("display_seconds", 120)
     return cfg
 
 
