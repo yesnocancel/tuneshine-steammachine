@@ -40,7 +40,9 @@ Re-run just the dry run anytime with `./setup.sh --test`.
    ```
 3. From this repo: `./install.sh deck@steammachine.local` (adjust user/host).
 4. Edit `~/.config/tuneshine-steam/config.json` on the machine: Tuneshine
-   host/IP and your SteamGridDB key.
+   host/IP and your SteamGridDB key. Optional: `display_seconds` — how long
+   the artwork stays up before the Tuneshine reverts to its idle screen
+   (default 60; 0 = show for the whole play session).
 5. Test without touching the Tuneshine:
    `~/.local/bin/steam_to_tuneshine.py --dry-run` while a game runs —
    previews land in `/tmp/tuneshine-preview-*.webp`.
@@ -78,7 +80,10 @@ something changes):
   SteamGridDB only once.
 - **Display**: sent to the Tuneshine's local HTTP API (spec:
   `http://<tuneshine>/openapi.json`), where a locally-pushed image overrides
-  the cloud/music artwork until it's deleted.
+  the cloud/music artwork until it's deleted. After `display_seconds`
+  (default 60, 0 = never) the watcher deletes it again so the panel returns
+  to its idle/music screen mid-session; each game launch — and each wake
+  from sleep — starts a fresh display window.
 - **Cleanup**: on game exit (debounced to survive loading-screen gaps) and on
   service stop the image is deleted; a D-Bus listener catches system suspend
   and clears before sleep, re-sending on resume; on startup the watcher

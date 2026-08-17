@@ -15,7 +15,8 @@ Config lives in ~/.config/tuneshine-steam/config.json:
     {
       "tuneshine_host": "tuneshine-abcd.local",
       "sgdb_api_key": "...",                  # steamgriddb.com/profile/preferences/api
-      "poll_seconds": 10
+      "poll_seconds": 10,
+      "display_seconds": 60                   # revert to idle screen after N s; 0 = show until game ends
     }
 
 Usage:
@@ -62,6 +63,7 @@ def load_config() -> dict:
     if not cfg.get("tuneshine_host") or not cfg.get("sgdb_api_key"):
         sys.exit(f"config {CONFIG_PATH} needs tuneshine_host and sgdb_api_key")
     cfg.setdefault("poll_seconds", 10)
+    cfg.setdefault("display_seconds", 60)
     return cfg
 
 
@@ -591,6 +593,7 @@ def sleep_monitor(cfg: dict, state: dict, lock: threading.Lock, dry_run: bool) -
                                 continue  # duplicate resume signal
                             state["suspending"] = False
                             state["misses"] = 0
+                            state["expired"] = None  # wake = fresh display window
                         inhibitor.take()
                         log("resumed — will re-send on next poll if a game is running")
                 time.sleep(5)  # monitor process died; restart it
@@ -609,15 +612,26 @@ def run_pass(cfg: dict, root: str, state: dict, dry_run: bool) -> None:
         # debounce: launches (Proton setup) and level loads can briefly leave no
         # AppId process; require 3 consecutive misses before declaring the game over
         state["misses"] = state.get("misses", 0) + 1
-        if state.get("shown") and state["misses"] >= 3:
-            log("game ended — clearing Tuneshine")
-            if not dry_run:
-                tuneshine_clear(cfg)
-            state["shown"] = None
+        if state["misses"] >= 3:
+            if state.get("shown"):
+                log("game ended — clearing Tuneshine")
+                if not dry_run:
+                    tuneshine_clear(cfg)
+                state["shown"] = None
+            state["expired"] = None  # next launch gets a fresh display window
         return
     state["misses"] = 0
     if state.get("shown") == appid:
+        secs = cfg["display_seconds"]
+        if secs and time.monotonic() - state["sent_at"] >= secs:
+            log(f"display window over ({secs}s) — clearing Tuneshine")
+            if not dry_run:
+                tuneshine_clear(cfg)
+            state["shown"] = None
+            state["expired"] = appid
         return
+    if state.get("expired") == appid:
+        return  # this game already had its display window
     game = resolve_game(root, appid)
     player = current_player(root)
     log(f"detected: {game['name']} (appid {appid}, "
@@ -625,7 +639,7 @@ def run_pass(cfg: dict, root: str, state: dict, dry_run: bool) -> None:
     webp = artwork_for(cfg, game)
     if webp is None:
         log("  no artwork found — leaving Tuneshine as-is")
-        state["shown"] = appid  # don't retry every poll
+        state["expired"] = appid  # don't retry every poll
         return
     metadata = {"trackName": game["name"], "serviceName": "Steam Machine"}
     if player:
@@ -639,6 +653,7 @@ def run_pass(cfg: dict, root: str, state: dict, dry_run: bool) -> None:
         tuneshine_send(cfg, webp, metadata)
         log(f"  sent to Tuneshine: {metadata}")
     state["shown"] = appid
+    state["sent_at"] = time.monotonic()
 
 
 def main() -> None:
